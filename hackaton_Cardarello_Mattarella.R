@@ -151,7 +151,7 @@ year_time <- dataset_yearly %>%
     -diff, -ends_with("iso"), -ends_with(".xts"), -contains("hour"),
     -contains("minute"), -contains("second"), -contains("am.pm")
   )
-data_prep_signature_tbl %>% glimpse()
+year_time %>% glimpse()
 
 
 # linear trend
@@ -191,17 +191,6 @@ dataset_weekly %>%
   plot_time_series_regression(date, value ~ week, .show_summary = TRUE)
 
 
-
-# * Interaction Features --------------------------------------------------
-
-dataset_weekly %>%
-  plot_time_series_regression(
-    date,
-    value ~ (as.factor(week2) * wday.lbl),
-    .show_summary = TRUE
-  )
-
-
 # * Rolling Average Features ----------------------------------------------
 
 # - tk_augment_slidify
@@ -235,7 +224,7 @@ data_prep_lags_tbl %>% glimpse()
 # - tk_augment_fourier
 
 dataset_daily %>%
-  plot_acf_diagnostics(optin_time, optins_trans, .lags = 100)
+  plot_acf_diagnostics(date, value, .lags = 100)
 
 data_prep_fourier_tbl <- dataset_daily %>%
   tk_augment_fourier(date, .periods = c(1, 7, 14, 30, 90, 365), .K = 2)
@@ -271,7 +260,7 @@ nested_daily_data <- dataset_daily %>%
     .length_test = 14
   )
 
-nested_daily_data
+trainin(nested_daily_data$.splits)
 
 
 ## Part 2.A: Create Tidymodels Workflows -----------------
@@ -330,24 +319,46 @@ wflw_naive <- workflow() %>%
 wrkfl_fit_lm_1_spline <- workflow() %>%
   add_model(model_spec_lm) %>%
   add_recipe(rcp_spec_spline) %>%
-  fit(training(splits))
+  fit(nested_daily_data$.actual_data[[1]])
+
 wrkfl_fit_lm_1_spline
 wrkfl_fit_lm_1_spline %>%
   extract_fit_parsnip() %>%
   pluck("fit") %>%
   summary()
-
 # LM Lag Workflow
 wrkfl_fit_lm_2_lag <- workflow() %>%
   add_model(model_spec_lm) %>%
   add_recipe(rcp_spec_lag) %>%
-  fit(training(splits))
+  fit(nested_daily_data$.actual_data[[1]])
+
 wrkfl_fit_lm_2_lag
 wrkfl_fit_lm_2_lag %>%
   extract_fit_parsnip() %>%
   pluck("fit") %>%
   summary()
 
+
+feature_engineering_artifacts_list <- list(
+  # Data
+  data = list(
+    "data_prep_tbl" = dataset_daily
+  ),
+  # Recipes
+  recipes = list(
+    "rcp_spec" = rec_naive,
+    "rcp_spec_spline" = rcp_spec_spline,
+    "rcp_spec_lag" = rcp_spec_lag
+  ),
+  # Models / Workflows
+  models = list(
+    "wrkfl_fit_lm_1_spline" = wrkfl_fit_lm_1_spline,
+    "wrkfl_fit_lm_2_lag" = wrkfl_fit_lm_2_lag
+  )
+)
+
+feature_engineering_artifacts_list %>%
+  write_rds("artifacts/feature_engineering_artifacts_list.rds")
 
 
 # WINDOW - MEAN
@@ -409,51 +420,6 @@ rec_xgb <- recipe(value ~ ., extract_nested_train_split(nested_daily_data)) %>%
 wflw_xgb <- workflow() %>%
   add_model(boost_tree("regression") %>% set_engine("xgboost")) %>%
   add_recipe(rec_xgb)
-
-
-
-# * Modeltime -------------------------------------------------------------
-
-# Calibration
-calibration_tbl <- modeltime_table(
-  wrkfl_fit_lm_1_spline,
-  wrkfl_fit_lm_2_lag
-) %>%
-  update_model_description(1, "LM - Spline Recipe") %>%
-  update_model_description(2, "LM - Lag Recipe") %>%
-  modeltime_calibrate(new_data = testing(splits))
-calibration_tbl
-
-
-# Forecasting
-calibration_tbl %>%
-  modeltime_forecast(new_data = testing(splits), actual_data = dataset_daily) %>%
-  plot_modeltime_forecast()
-
-# Accuracy
-calibration_tbl %>% modeltime_accuracy()
-
-# Refitting
-refit_tbl <- calibration_tbl %>%
-  modeltime_refit(data = dataset_daily)
-
-refit_tbl %>%
-  modeltime_forecast(new_data = forecast_tbl, actual_data = data_prep_tbl) %>%
-  mutate(
-    across(
-      .value:.conf_hi,
-      .fns = ~ standardize_inv_vec(x = ., mean = std_mean, sd = std_sd)
-    )
-  ) %>%
-  mutate(
-    across(
-      .value:.conf_hi,
-      .fns = ~ log_interval_inv_vec(
-        x = ., limit_lower = limit_lower, limit_upper = limit_upper, offset = offset
-      )
-    )
-  ) %>%
-  plot_modeltime_forecast()
 
 
 ## Part 2.B: Nested Modeltime Tables -----------------
