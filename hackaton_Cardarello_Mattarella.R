@@ -411,6 +411,51 @@ wflw_xgb <- workflow() %>%
   add_recipe(rec_xgb)
 
 
+
+# * Modeltime -------------------------------------------------------------
+
+# Calibration
+calibration_tbl <- modeltime_table(
+  wrkfl_fit_lm_1_spline,
+  wrkfl_fit_lm_2_lag
+) %>%
+  update_model_description(1, "LM - Spline Recipe") %>%
+  update_model_description(2, "LM - Lag Recipe") %>%
+  modeltime_calibrate(new_data = testing(splits))
+calibration_tbl
+
+
+# Forecasting
+calibration_tbl %>%
+  modeltime_forecast(new_data = testing(splits), actual_data = dataset_daily) %>%
+  plot_modeltime_forecast()
+
+# Accuracy
+calibration_tbl %>% modeltime_accuracy()
+
+# Refitting
+refit_tbl <- calibration_tbl %>%
+  modeltime_refit(data = dataset_daily)
+
+refit_tbl %>%
+  modeltime_forecast(new_data = forecast_tbl, actual_data = data_prep_tbl) %>%
+  mutate(
+    across(
+      .value:.conf_hi,
+      .fns = ~ standardize_inv_vec(x = ., mean = std_mean, sd = std_sd)
+    )
+  ) %>%
+  mutate(
+    across(
+      .value:.conf_hi,
+      .fns = ~ log_interval_inv_vec(
+        x = ., limit_lower = limit_lower, limit_upper = limit_upper, offset = offset
+      )
+    )
+  ) %>%
+  plot_modeltime_forecast()
+
+
 ## Part 2.B: Nested Modeltime Tables -----------------
 # With a couple of modeling workflows in hand, we are now ready to test them
 # on each of the time series.
