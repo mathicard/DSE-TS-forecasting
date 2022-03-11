@@ -1,6 +1,6 @@
 # Packages
 pkgs <- c(
-  "tidyverse", "lubridate",
+  "tidyverse", "lubridate", "tidymodels", "quantmod",
   "timetk", "DataExplorer", "fs",
   "forecast", "prophet",
   "glmnet", "earth",
