@@ -6,7 +6,7 @@ pkgs <- c(
   "glmnet", "earth",
   "kernlab",
   "kknn",
-  "randomForest", "ranger", "xgboost", "treesnip", "lightgbm", "catboost",
+  "randomForest", "ranger", "xgboost", "lightgbm",
   "Cubist", "rules",
   "tidymodels", "modeltime", "modeltime.h2o", "modeltime.ensemble",
   "parallel", "doFuture", "tictoc",
