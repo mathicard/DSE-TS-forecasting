@@ -6,12 +6,13 @@
 
 setwd("/Users/mathiascardarellofierro/Documents/DSE/TS lab/tsforecasting-course-master")
 source("R/utils.R")
-source("R/packages.R") #error with catboost
+source("R/packages.R") #error with catboost and treesnip
 
 library(tidymodels)
 library(modeltime)
 library(modeltime.ensemble)
 library(quantmod)
+
 
 
 # Data --------------------------------------------------------------------
@@ -120,44 +121,38 @@ dataset$data %>%
 
 # Splitting Data
 (dataset$data %>%
-  filter(period == 'Daily') %>%
-  group_by(id) %>%  
-  tk_summary_diagnostics())
+   filter(period == 'Daily') %>%
+   group_by(id) %>%  
+   tk_summary_diagnostics())
 
 
 #14 days to forecast
 
 nested_daily_data <- dataset$data %>%
-  filter(period == 'Daily', type == 'train') %>%
+  filter(period == 'Daily') %>%
   select(id, date, value) %>%
-  # Step 1: Extend
-  extend_timeseries(
-    .id_var        = id,
-    .date_var      = date,
-    .length_future = 14
-  ) %>%
-  # Step 2: Nest
+  # Step 1: Nest
   nest_timeseries(
     .id_var        = id,
-    .length_future = 14,
-    ) %>%
+    .length_future = 14
+  ) %>%
   
-  # Step 3: Splitting
+  # Step 2: Splitting
   split_nested_timeseries(
     .length_test = 14
   )
-  
-    nested_daily_data
+
+nested_daily_data
 
 
-## Part 2: Create Tidymodels Workflows -----------------
+## Part 2.A: Create Tidymodels Workflows -----------------
 
 #First, we create tidymodels workflows for the various models 
 
 
 # Prophet ------------------------------------------------------------
-    
-rec_prophet <- recipe(value ~ date, training(nested_daily_data$.splits[[1]])) 
+
+rec_prophet <- recipe(value ~ date, extract_nested_train_split(nested_daily_data)) 
 
 wflw_prophet <- workflow() %>%
   add_model(
@@ -167,6 +162,68 @@ wflw_prophet <- workflow() %>%
   add_recipe(rec_prophet)
 
 
+# XGBoost ------------------------------------------------------------
+
+rec_xgb <- recipe(value ~ ., extract_nested_train_split(nested_daily_data)) %>%
+  step_timeseries_signature(date) %>%
+  step_rm(date) %>%
+  step_zv(all_predictors()) %>%
+  step_dummy(all_nominal_predictors(), one_hot = TRUE)
+
+wflw_xgb <- workflow() %>%
+  add_model(boost_tree("regression") %>% set_engine("xgboost")) %>%
+  add_recipe(rec_xgb)
+
+
+## Part 2.B: Nested Modeltime Tables -----------------
+
+nested_modeltime_tbl <- modeltime_nested_fit(
+  # Nested data 
+  nested_data = nested_daily_data,
+  
+  # Add workflows
+  wflw_prophet,
+  wflw_xgb
+)
+
+nested_modeltime_tbl
+
+
+
+# Accuracy check ------------------------------------------------------------
+
+
+tab_style_by_group <- function(object, ..., style) {
+  
+  subset_log <- object[["_boxhead"]][["type"]]=="row_group"
+  grp_col    <- object[["_boxhead"]][["var"]][subset_log] %>% rlang::sym()
+  
+  object %>%
+    tab_style(
+      style = style,
+      locations = cells_body(
+        rows = .[["_data"]] %>%
+          rowid_to_column("rowid") %>%
+          group_by(!! grp_col) %>%
+          filter(...) %>%
+          ungroup() %>%
+          pull(rowid)
+      )
+    )
+}
+
+
+nested_modeltime_tbl %>% 
+  extract_nested_test_accuracy() %>%
+  group_by(id) %>%
+  table_modeltime_accuracy(.interactive = FALSE) %>%
+  tab_style_by_group(
+    rmse == min(rmse),
+    style = cell_fill(color = "lightblue")
+  )
+
+
+## Part 2.C: Make Ensembles -----------------
 
 
 
