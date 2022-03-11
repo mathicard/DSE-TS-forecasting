@@ -110,11 +110,54 @@ dataset$data %>%
 
 # - Filling in time series gaps
 
-# fill daily gaps
-dataset$data %>%
-  filter(period == 'Daily') %>%
+#periods <- c('Hourly', 'Daily', 'Weekly', 'Monthly', 'Quarterly', 'Yearly')
+
+#for (freq in periods){
+#  dataset0 <- 0
+#  dataset0 <- dataset$data %>%
+#  filter(period == freq) %>%
+#  group_by(id) %>%  
+#  pad_by_time(.date_var = date, .pad_value = 0)
+#  assign(paste("dataset", freq, sep = "_"), dataset0)
+#}
+
+dataset_hourly <- dataset$data %>%
+  filter(period == "Hourly") %>%
   group_by(id) %>%  
-  pad_by_time(.date_var = date, .pad_value = 0)
+  pad_by_time(.date_var = date, .by = "hour", .pad_value = 0)
+
+
+dataset_daily <- dataset$data %>%
+  filter(period == "Daily") %>%
+  group_by(id) %>%  
+  pad_by_time(.date_var = date, .by = "day", .pad_value = 0)
+
+
+dataset_weekly <- dataset$data %>%
+  filter(period == "Weekly") %>%
+  group_by(id) %>%  
+  pad_by_time(.date_var = date, .by = "week", .pad_value = 0)
+
+
+#error
+dataset_monthly <- dataset$data %>%
+  filter(period == "Monthly") %>%
+  group_by(id) %>%  
+  pad_by_time(.date_var = date, .by = "month", .pad_value = 0)
+
+
+dataset_yearly <- dataset$data %>%
+  filter(period == "Yearly") %>%
+  group_by(id) %>%  
+  pad_by_time(.date_var = date, .by = "year", .pad_value = 0)
+
+
+#error
+dataset_quarterly <- dataset$data %>%
+  filter(period == "Quarterly") %>%
+  group_by(id) %>%  
+  pad_by_time(.date_var = date, .by = "quarter", .pad_value = 0)
+
 
 
 # Recipes -----------------------------------------------------------------
