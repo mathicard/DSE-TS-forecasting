@@ -219,11 +219,80 @@ nested_modeltime_tbl %>%
   table_modeltime_accuracy(.interactive = FALSE) %>%
   tab_style_by_group(
     rmse == min(rmse),
-    style = cell_fill(color = "lightblue")
+    style = cell_fill(color = "lightgreen")
   )
 
 
 ## Part 2.C: Make Ensembles -----------------
+
+# Average Ensemble 
+
+nested_ensemble_1_tbl <- nested_modeltime_tbl %>%
+  ensemble_nested_average(
+    type           = "mean", 
+    keep_submodels = TRUE
+  )
+
+nested_ensemble_1_tbl
+
+nested_ensemble_1_tbl %>% 
+  extract_nested_test_accuracy() %>%
+  group_by(id) %>%
+  table_modeltime_accuracy(.interactive = FALSE) %>%
+  tab_style_by_group(
+    rmse == min(rmse),
+    style = cell_fill(color = "lightgreen")
+  )
+
+
+
+# Weighted Ensemble
+
+nested_ensemble_2_tbl <- nested_ensemble_1_tbl %>%
+  ensemble_nested_weighted(
+    loadings        = c(2,1),  
+    metric          = "rmse",
+    model_ids       = c(1,2), 
+    control         = control_nested_fit(allow_par = FALSE, verbose = TRUE)
+  ) 
+
+nested_ensemble_2_tbl
+
+nested_ensemble_2_tbl %>% 
+  extract_nested_test_accuracy() %>%
+  group_by(id) %>%
+  table_modeltime_accuracy(.interactive = FALSE) %>%
+  tab_style_by_group(
+    rmse == min(rmse),
+    style = cell_fill(color = "lightblue")
+  )
+
+
+## Part 3: Best models -----------------
+
+
+best_nested_modeltime_tbl <- nested_ensemble_2_tbl %>%
+  modeltime_nested_select_best(
+    metric                = "rmse", 
+    minimize              = TRUE, 
+    filter_test_forecasts = TRUE
+  )
+
+best_nested_modeltime_tbl %>%
+  extract_nested_best_model_report() %>%
+  table_modeltime_accuracy(.interactive = TRUE)
+
+
+# Forecast plot
+
+best_nested_modeltime_tbl %>%
+  extract_nested_test_forecast() %>%
+  group_by(id) %>%
+  filter(id == "D1142") %>%
+  plot_modeltime_forecast(
+    .facet_ncol  = 1,
+    .interactive = TRUE
+  )
 
 
 
