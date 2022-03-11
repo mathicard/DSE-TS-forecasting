@@ -1,7 +1,7 @@
 # Packages
 pkgs <- c(
   "tidyverse", "lubridate", "tidymodels", "quantmod",
-  "timetk", "DataExplorer", "fs",
+  "timetk", "DataExplorer", "fs", "padr",
   "forecast", "prophet",
   "glmnet", "earth",
   "kernlab",
