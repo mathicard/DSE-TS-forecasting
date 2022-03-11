@@ -4,21 +4,15 @@
 
 # Packages ----------------------------------------------------------------
 
-setwd("/Users/mathiascardarellofierro/Documents/DSE/TS lab/tsforecasting-course-master")
-source("R/utils.R")
-source("R/packages.R") #error with catboost and treesnip
-
-library(tidymodels)
-library(modeltime)
-library(modeltime.ensemble)
-library(quantmod)
-
+source("https://raw.githubusercontent.com/mathicard/DSE-TS-forecasting/main/utils.R")
+source("https://raw.githubusercontent.com/mathicard/DSE-TS-forecasting/main/packages.R")
 
 
 # Data --------------------------------------------------------------------
 
-dataset <- read_rds("data/hackathon_dataset.rds")
-# we have 20 series per each period type
+dataset <- read_rds("https://github.com/mathicard/DSE-TS-forecasting/blob/main/hackathon_dataset.rds?raw=true")
+
+# we have 20 series per each period of time
 
 
 ## Part 1: Manipulation, Transformation & Visualization -----------------
@@ -110,17 +104,6 @@ dataset$data %>%
 
 # - Filling in time series gaps
 
-#periods <- c('Hourly', 'Daily', 'Weekly', 'Monthly', 'Quarterly', 'Yearly')
-
-#for (freq in periods){
-#  dataset0 <- 0
-#  dataset0 <- dataset$data %>%
-#  filter(period == freq) %>%
-#  group_by(id) %>%  
-#  pad_by_time(.date_var = date, .pad_value = 0)
-#  assign(paste("dataset", freq, sep = "_"), dataset0)
-#}
-
 dataset_hourly <- dataset$data %>%
   filter(period == "Hourly") %>%
   group_by(id) %>%  
@@ -171,16 +154,15 @@ dataset_quarterly <- dataset$data %>%
 
 #14 days to forecast
 
-nested_daily_data <- dataset$data %>%
-  filter(period == 'Daily') %>%
+nested_daily_data <- dataset_daily %>%
   select(id, date, value) %>%
-  # Step 1: Nest
+  # Step 1 - Nest: We'll predict 14 days into the future
   nest_timeseries(
     .id_var        = id,
     .length_future = 14
   ) %>%
   
-  # Step 2: Splitting
+  # Step 2 - Splitting: 
   split_nested_timeseries(
     .length_test = 14
   )
@@ -192,8 +174,56 @@ nested_daily_data
 
 #First, we create tidymodels workflows for the various models 
 
+# S-NAIVE & WINDOWS -------------------------------------------------------
+# Compare the model against a predefined benchmark
+
+
+# NAIVE: our forecast is just the most recent observation in time
+
+rec_naive <- recipe(value ~ date, extract_nested_train_split(nested_daily_data)) 
+
+wflw_naive <- workflow() %>%
+  add_model(
+    naive_reg() %>%
+      set_engine("naive")
+  ) %>%
+  add_recipe(rec_naive)
+
+
+# WINDOW - MEAN
+
+rec_mean <- recipe(value ~ date, extract_nested_train_split(nested_daily_data)) 
+
+wflw_mean <- workflow() %>%
+  add_model(
+    window_reg(window_size = 7) %>%
+      set_engine("window_function",
+        window_function = mean,
+        na.rm = TRUE)
+     )  %>%
+    add_recipe(rec_mean)
+
+
+# WINDOW - WEIGHTED MEAN (a moving average, based on the last 3 obs. for instance)
+
+rec_wmean <- recipe(value ~ date, extract_nested_train_split(nested_daily_data)) 
+
+wflw_wmean <- workflow() %>%
+  add_model(
+    window_reg(window_size = 7) %>%
+      set_engine(
+        "window_function",
+        window_function = ~ sum(tail(.x, 3) * c(0.1, 0.3, 0.6))
+      )
+  )  %>%
+  add_recipe(rec_mean)
+
+
 
 # Prophet ------------------------------------------------------------
+# A common modeling method is prophet, that can be created using prophet_reg(). 
+# Note that we use the first nested_data_tbl$.splits[[1]]) to help us determine 
+# how to build features.
 
 rec_prophet <- recipe(value ~ date, extract_nested_train_split(nested_daily_data)) 
 
@@ -206,6 +236,9 @@ wflw_prophet <- workflow() %>%
 
 
 # XGBoost ------------------------------------------------------------
+# Next, we can use a machine learning method that can get good results: XGBoost. 
+# We will add a few extra features in the recipe feature engineering step 
+# to generate features that tend to get better modeling results. 
 
 rec_xgb <- recipe(value ~ ., extract_nested_train_split(nested_daily_data)) %>%
   step_timeseries_signature(date) %>%
@@ -219,6 +252,12 @@ wflw_xgb <- workflow() %>%
 
 
 ## Part 2.B: Nested Modeltime Tables -----------------
+# With a couple of modeling workflows in hand, we are now ready to test them 
+# on each of the time series. 
+# We start by using the modeltime_nested_fit() function, 
+# which iteratively fits each model to each of the nested time series 
+# train/test “.splits” column.
+
 
 nested_modeltime_tbl <- modeltime_nested_fit(
   # Nested data 
@@ -234,7 +273,6 @@ nested_modeltime_tbl
 
 
 # Accuracy check ------------------------------------------------------------
-
 
 tab_style_by_group <- function(object, ..., style) {
   
@@ -256,6 +294,9 @@ tab_style_by_group <- function(object, ..., style) {
 }
 
 
+# Now we can see which models are the winners, 
+# performing the best by group with the lowest RMSE (root mean squared error).
+
 nested_modeltime_tbl %>% 
   extract_nested_test_accuracy() %>%
   group_by(id) %>%
@@ -268,15 +309,21 @@ nested_modeltime_tbl %>%
 
 ## Part 2.C: Make Ensembles -----------------
 
-# Average Ensemble 
+# Now that we’ve fitted submodels, our goal is to improve 
+# on the submodels by leveraging ensembles.
+
+# Average Ensemble: We’ll give a go at an average ensemble using a simple mean 
+# with the ensemble_nested_average() function. We select type = "mean" for simple average.  
 
 nested_ensemble_1_tbl <- nested_modeltime_tbl %>%
   ensemble_nested_average(
     type           = "mean", 
     keep_submodels = TRUE
-  )
+    )
 
 nested_ensemble_1_tbl
+
+# We can check the accuracy again. 
 
 nested_ensemble_1_tbl %>% 
   extract_nested_test_accuracy() %>%
@@ -289,7 +336,8 @@ nested_ensemble_1_tbl %>%
 
 
 
-# Weighted Ensemble
+# Weighted Ensemble: Next, we can give a go at a weighted ensemble 
+# with the ensemble_nested_weighted() function.
 
 nested_ensemble_2_tbl <- nested_ensemble_1_tbl %>%
   ensemble_nested_weighted(
@@ -301,18 +349,23 @@ nested_ensemble_2_tbl <- nested_ensemble_1_tbl %>%
 
 nested_ensemble_2_tbl
 
+# Next, let’s check the accuracy on the new ensemble.
+
 nested_ensemble_2_tbl %>% 
   extract_nested_test_accuracy() %>%
   group_by(id) %>%
   table_modeltime_accuracy(.interactive = FALSE) %>%
   tab_style_by_group(
     rmse == min(rmse),
-    style = cell_fill(color = "lightblue")
+    style = cell_fill(color = "lightgreen")
   )
 
 
 ## Part 3: Best models -----------------
 
+# Using the accuracy data, we can pick a metric and select the best model 
+# based on that metric. 
+# The available metrics are in the default_forecast_accuracy_metric_set(). 
 
 best_nested_modeltime_tbl <- nested_ensemble_2_tbl %>%
   modeltime_nested_select_best(
@@ -321,12 +374,15 @@ best_nested_modeltime_tbl <- nested_ensemble_2_tbl %>%
     filter_test_forecasts = TRUE
   )
 
+# The best model selections can be accessed with extract_nested_best_model_report().
+
 best_nested_modeltime_tbl %>%
   extract_nested_best_model_report() %>%
   table_modeltime_accuracy(.interactive = TRUE)
 
 
-# Forecast plot
+# Forecast plot: Once we’ve selected the best models, 
+# we can easily visualize the best forecasts by time series. 
 
 best_nested_modeltime_tbl %>%
   extract_nested_test_forecast() %>%
