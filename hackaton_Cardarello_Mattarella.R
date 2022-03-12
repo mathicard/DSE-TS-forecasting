@@ -6,7 +6,6 @@
 
 source("https://raw.githubusercontent.com/mathicard/DSE-TS-forecasting/main/utils.R")
 source("https://raw.githubusercontent.com/mathicard/DSE-TS-forecasting/main/packages.R")
-library(padr)
 
 # Data --------------------------------------------------------------------
 
@@ -16,13 +15,6 @@ dataset <- read_rds("https://github.com/mathicard/DSE-TS-forecasting/blob/main/h
 
 
 ## Part 1: Manipulation, Transformation & Visualization -----------------
-
-# Manipulation ------------------------------------------------------------
-
-# daily
-dataset_daily <- dataset$data %>%
-  filter(period == 'Daily')
-
 
 # Visualization ------------------------------------------------------
 
@@ -134,7 +126,6 @@ dataset_yearly <- dataset$data %>%
   pad_by_time(.date_var = date, .by = "year", .pad_value = 0)
 
 
-
 dataset_quarterly <- dataset$data %>%
   filter(period == "Quarterly")  %>%
   thicken('quarter') %>%
@@ -179,6 +170,7 @@ year_time %>%
 
 
 # weekly seasonality
+
 dataset_weekly <- dataset_weekly %>%
   tk_augment_timeseries_signature() %>%
   select(
@@ -216,6 +208,7 @@ dataset_daily %>%
 data_prep_lags_tbl <- dataset_daily %>%
   tk_augment_lags(value, .lags = c(1, 7, 14, 30, 90, 365)) %>%
   drop_na()
+
 data_prep_lags_tbl %>% glimpse()
 
 
@@ -238,14 +231,53 @@ data_prep_fourier_tbl %>%
 
 # Recipes -----------------------------------------------------------------
 
-# Splitting Data
-(dataset$data %>%
-   filter(period == 'Daily') %>%
-   group_by(id) %>%
+(dataset_hourly %>%
+   group_by(id, type) %>%
    tk_summary_diagnostics())
 
+(dataset_daily %>%
+    group_by(id, type) %>%
+   tk_summary_diagnostics())
 
-#14 days to forecast
+(dataset_weekly %>%
+    group_by(id, type) %>%
+    tk_summary_diagnostics())
+
+(dataset_monthly %>%
+    group_by(id, type) %>%
+    tk_summary_diagnostics())
+
+(dataset_yearly %>%
+    group_by(id, type) %>%
+    tk_summary_diagnostics())
+
+(dataset_quarterly %>%
+    group_by(id, type) %>%
+    tk_summary_diagnostics())
+
+
+# Hourly: 48 hours to forecast
+# Daily: 14 days to forecast
+# Weekly: 13 weeks to forecast
+# Monthly: 18 months to forecast
+# Yearly: 6 years to forecast
+# Quarterly: 8 quarters to forecast
+
+nested_hourly_data <- dataset_hourly %>%
+  select(id, date, value) %>%
+  # Step 1 - Nest
+  nest_timeseries(
+    .id_var        = id,
+    .length_future = 48
+  ) %>%
+  
+  # Step 2 - Splitting:
+  split_nested_timeseries(
+    .length_test = 48
+  )
+
+
+##
 
 nested_daily_data <- dataset_daily %>%
   select(id, date, value) %>%
@@ -260,7 +292,68 @@ nested_daily_data <- dataset_daily %>%
     .length_test = 14
   )
 
-trainin(nested_daily_data$.splits)
+
+##
+
+nested_weekly_data <- dataset_weekly %>%
+  select(id, date, value) %>%
+  # Step 1 - Nest
+  nest_timeseries(
+    .id_var        = id,
+    .length_future = 13
+  ) %>%
+  
+  # Step 2 - Splitting:
+  split_nested_timeseries(
+    .length_test = 13
+  )
+
+
+##
+
+nested_monthly_data <- dataset_monthly %>%
+  select(id, date, value) %>%
+  # Step 1 - Nest
+  nest_timeseries(
+    .id_var        = id,
+    .length_future = 18
+  ) %>%
+  
+  # Step 2 - Splitting:
+  split_nested_timeseries(
+    .length_test = 18
+  )
+
+
+nested_yearly_data <- dataset_yearly %>%
+  select(id, date, value) %>%
+  # Step 1 - Nest
+  nest_timeseries(
+    .id_var        = id,
+    .length_future = 6
+  ) %>%
+  
+  # Step 2 - Splitting:
+  split_nested_timeseries(
+    .length_test = 6
+  )
+
+
+
+nested_quarterly_data <- dataset_quarterly %>%
+  select(id, date, value) %>%
+  # Step 1 - Nest
+  nest_timeseries(
+    .id_var        = id,
+    .length_future = 8
+  ) %>%
+  
+  # Step 2 - Splitting:
+  split_nested_timeseries(
+    .length_test = 8
+  )
+
+
 
 
 ## Part 2.A: Create Tidymodels Workflows -----------------
@@ -269,7 +362,6 @@ trainin(nested_daily_data$.splits)
 
 # S-NAIVE & WINDOWS -------------------------------------------------------
 # Compare the model against a predefined benchmark
-
 
 # NAIVE: our forecast is just the most recent observation in time
 
@@ -326,6 +418,7 @@ wrkfl_fit_lm_1_spline %>%
   extract_fit_parsnip() %>%
   pluck("fit") %>%
   summary()
+
 # LM Lag Workflow
 wrkfl_fit_lm_2_lag <- workflow() %>%
   add_model(model_spec_lm) %>%
@@ -357,8 +450,8 @@ feature_engineering_artifacts_list <- list(
   )
 )
 
-feature_engineering_artifacts_list %>%
-  write_rds("artifacts/feature_engineering_artifacts_list.rds")
+feature_engineering_artifacts_list 
+
 
 
 # WINDOW - MEAN
@@ -375,7 +468,7 @@ wflw_mean <- workflow() %>%
     add_recipe(rec_mean)
 
 
-# WINDOW - WEIGHTED MEAN (a moving average, based on the last 3 obs. for instance)
+# WINDOW - WEIGHTED MEAN (a moving average, based on the last obs.)
 
 rec_wmean <- recipe(value ~ date, extract_nested_train_split(nested_daily_data))
 
@@ -396,14 +489,77 @@ wflw_wmean <- workflow() %>%
 # Note that we use the first nested_data_tbl$.splits[[1]]) to help us determine
 # how to build features.
 
-rec_prophet <- recipe(value ~ date, extract_nested_train_split(nested_daily_data))
+rec_prophet_h <- recipe(value ~ date, extract_nested_train_split(nested_hourly_data))
 
-wflw_prophet <- workflow() %>%
+wflw_prophet_h <- workflow() %>%
   add_model(
     prophet_reg("regression", seasonality_yearly = TRUE) %>%
       set_engine("prophet")
   ) %>%
-  add_recipe(rec_prophet)
+  add_recipe(rec_prophet_h)
+
+
+##
+
+rec_prophet_d <- recipe(value ~ date, extract_nested_train_split(nested_daily_data))
+
+wflw_prophet_d <- workflow() %>%
+  add_model(
+    prophet_reg("regression", seasonality_yearly = TRUE) %>%
+      set_engine("prophet")
+  ) %>%
+  add_recipe(rec_prophet_d)
+
+
+##
+
+rec_prophet_w <- recipe(value ~ date, extract_nested_train_split(nested_weekly_data))
+
+wflw_prophet_w <- workflow() %>%
+  add_model(
+    prophet_reg("regression", seasonality_yearly = TRUE) %>%
+      set_engine("prophet")
+  ) %>%
+  add_recipe(rec_prophet_w)
+
+
+##
+
+rec_prophet_m <- recipe(value ~ date, extract_nested_train_split(nested_monthly_data))
+
+wflw_prophet_m <- workflow() %>%
+  add_model(
+    prophet_reg("regression", seasonality_yearly = TRUE) %>%
+      set_engine("prophet")
+  ) %>%
+  add_recipe(rec_prophet_m)
+
+
+##
+
+rec_prophet_y <- recipe(value ~ date, extract_nested_train_split(nested_yearly_data))
+
+wflw_prophet_y <- workflow() %>%
+  add_model(
+    prophet_reg("regression", seasonality_yearly = FALSE) %>%
+      set_engine("prophet")
+  ) %>%
+  add_recipe(rec_prophet_y)
+
+
+##
+
+rec_prophet_q <- recipe(value ~ date, extract_nested_train_split(nested_quarterly_data))
+
+wflw_prophet_q <- workflow() %>%
+  add_model(
+    prophet_reg("regression", seasonality_yearly = FALSE) %>%
+      set_engine("prophet")
+  ) %>%
+  add_recipe(rec_prophet_q)
+
+
+
 
 
 # XGBoost ------------------------------------------------------------
@@ -411,15 +567,83 @@ wflw_prophet <- workflow() %>%
 # We will add a few extra features in the recipe feature engineering step
 # to generate features that tend to get better modeling results.
 
-rec_xgb <- recipe(value ~ ., extract_nested_train_split(nested_daily_data)) %>%
+rec_xgb_h <- recipe(value ~ ., extract_nested_train_split(nested_hourly_data)) %>%
   step_timeseries_signature(date) %>%
   step_rm(date) %>%
   step_zv(all_predictors()) %>%
   step_dummy(all_nominal_predictors(), one_hot = TRUE)
 
-wflw_xgb <- workflow() %>%
+wflw_xgb_h <- workflow() %>%
   add_model(boost_tree("regression") %>% set_engine("xgboost")) %>%
-  add_recipe(rec_xgb)
+  add_recipe(rec_xgb_h)
+
+
+##
+
+rec_xgb_d <- recipe(value ~ ., extract_nested_train_split(nested_daily_data)) %>%
+  step_timeseries_signature(date) %>%
+  step_rm(date) %>%
+  step_zv(all_predictors()) %>%
+  step_dummy(all_nominal_predictors(), one_hot = TRUE)
+
+wflw_xgb_d <- workflow() %>%
+  add_model(boost_tree("regression") %>% set_engine("xgboost")) %>%
+  add_recipe(rec_xgb_d)
+
+
+##
+
+rec_xgb_w <- recipe(value ~ ., extract_nested_train_split(nested_weekly_data)) %>%
+  step_timeseries_signature(date) %>%
+  step_rm(date) %>%
+  step_zv(all_predictors()) %>%
+  step_dummy(all_nominal_predictors(), one_hot = TRUE)
+
+wflw_xgb_w <- workflow() %>%
+  add_model(boost_tree("regression") %>% set_engine("xgboost")) %>%
+  add_recipe(rec_xgb_w)
+
+
+##
+
+rec_xgb_m <- recipe(value ~ ., extract_nested_train_split(nested_monthly_data)) %>%
+  step_timeseries_signature(date) %>%
+  step_rm(date) %>%
+  step_zv(all_predictors()) %>%
+  step_dummy(all_nominal_predictors(), one_hot = TRUE)
+
+wflw_xgb_m <- workflow() %>%
+  add_model(boost_tree("regression") %>% set_engine("xgboost")) %>%
+  add_recipe(rec_xgb_m)
+
+
+
+##
+
+rec_xgb_y <- recipe(value ~ ., extract_nested_train_split(nested_yearly_data)) %>%
+  step_timeseries_signature(date) %>%
+  step_rm(date) %>%
+  step_zv(all_predictors()) %>%
+  step_dummy(all_nominal_predictors(), one_hot = TRUE)
+
+wflw_xgb_y <- workflow() %>%
+  add_model(boost_tree("regression") %>% set_engine("xgboost")) %>%
+  add_recipe(rec_xgb_y)
+
+
+##
+
+rec_xgb_q <- recipe(value ~ ., extract_nested_train_split(nested_quarterly_data)) %>%
+  step_timeseries_signature(date) %>%
+  step_rm(date) %>%
+  step_zv(all_predictors()) %>%
+  step_dummy(all_nominal_predictors(), one_hot = TRUE)
+
+wflw_xgb_q <- workflow() %>%
+  add_model(boost_tree("regression") %>% set_engine("xgboost")) %>%
+  add_recipe(rec_xgb_q)
+
+
 
 
 ## Part 2.B: Nested Modeltime Tables -----------------
@@ -429,27 +653,115 @@ wflw_xgb <- workflow() %>%
 # which iteratively fits each model to each of the nested time series
 # train/test “.splits” column.
 
+Init_h <- Sys.time()
 
-nested_modeltime_tbl <- modeltime_nested_fit(
+nested_modeltime_tbl_h <- modeltime_nested_fit(
   # Nested data
-  nested_data = nested_daily_data,
-
+  nested_data = nested_hourly_data,
   # Add workflows
-  wflw_prophet,
-  wflw_xgb
+  wflw_prophet_h,
+  wflw_xgb_h
 )
 
-nested_modeltime_tbl
+nested_modeltime_tbl_h
 
+End_h <- Sys.time()
+
+
+#####
+
+Init_d <- Sys.time()
+
+nested_modeltime_tbl_d <- modeltime_nested_fit(
+  # Nested data
+  nested_data = nested_daily_data,
+  # Add workflows
+  wflw_prophet_d,
+  wflw_xgb_d
+)
+
+nested_modeltime_tbl_d
+
+End_d <- Sys.time()
+
+#####
+
+Init_w <- Sys.time()
+
+nested_modeltime_tbl_w <- modeltime_nested_fit(
+  # Nested data
+  nested_data = nested_weekly_data,
+  # Add workflows
+  wflw_prophet_w,
+  wflw_xgb_w
+)
+
+nested_modeltime_tbl_w
+
+End_w <- Sys.time()
+
+End_w - Init_w
+
+#####
+
+Init_m <- Sys.time()
+
+nested_modeltime_tbl_m <- modeltime_nested_fit(
+  # Nested data
+  nested_data = nested_monthly_data,
+  # Add workflows
+  wflw_prophet_m,
+  wflw_xgb_m
+)
+
+nested_modeltime_tbl_m
+
+End_m <- Sys.time()
+
+
+#####
+
+Init_y <- Sys.time()
+
+nested_modeltime_tbl_y <- modeltime_nested_fit(
+  # Nested data
+  nested_data = nested_yearly_data,
+  # Add workflows
+  wflw_prophet_y,
+  wflw_xgb_y
+)
+
+nested_modeltime_tbl_y
+
+End_y <- Sys.time()
+
+
+#####
+
+Init_q <- Sys.time()
+
+nested_modeltime_tbl_q <- modeltime_nested_fit(
+  # Nested data
+  nested_data = nested_quarterly_data,
+  # Add workflows
+  wflw_prophet_q,
+  wflw_xgb_q
+)
+
+nested_modeltime_tbl_q
+
+End_q <- Sys.time()
 
 
 # Accuracy check ------------------------------------------------------------
 
-tab_style_by_group <- function(object, ..., style) {
+library(gt)
 
+tab_style_by_group <- function(object, ..., style) {
+  
   subset_log <- object[["_boxhead"]][["type"]]=="row_group"
   grp_col    <- object[["_boxhead"]][["var"]][subset_log] %>% rlang::sym()
-
+  
   object %>%
     tab_style(
       style = style,
@@ -468,7 +780,67 @@ tab_style_by_group <- function(object, ..., style) {
 # Now we can see which models are the winners,
 # performing the best by group with the lowest RMSE (root mean squared error).
 
-nested_modeltime_tbl %>%
+
+nested_modeltime_tbl_h %>%
+  extract_nested_test_accuracy() %>%
+  group_by(id) %>%
+  table_modeltime_accuracy(.interactive = FALSE) %>%
+  tab_style_by_group(
+    rmse == min(rmse),
+    style = cell_fill(color = "lightgreen")
+  )
+
+
+#####
+
+nested_modeltime_tbl_d %>%
+  extract_nested_test_accuracy() %>%
+  group_by(id) %>%
+  table_modeltime_accuracy(.interactive = FALSE) %>%
+  tab_style_by_group(
+    rmse == min(rmse),
+    style = cell_fill(color = "lightgreen")
+  )
+
+
+#####
+
+nested_modeltime_tbl_w %>%
+  extract_nested_test_accuracy() %>%
+  group_by(id) %>%
+  table_modeltime_accuracy(.interactive = FALSE) %>%
+  tab_style_by_group(
+    rmse == min(rmse),
+    style = cell_fill(color = "lightgreen")
+  )
+
+
+#####
+
+nested_modeltime_tbl_m %>%
+  extract_nested_test_accuracy() %>%
+  group_by(id) %>%
+  table_modeltime_accuracy(.interactive = FALSE) %>%
+  tab_style_by_group(
+    rmse == min(rmse),
+    style = cell_fill(color = "lightgreen")
+  )
+
+#####
+
+nested_modeltime_tbl_q %>%
+  extract_nested_test_accuracy() %>%
+  group_by(id) %>%
+  table_modeltime_accuracy(.interactive = FALSE) %>%
+  tab_style_by_group(
+    rmse == min(rmse),
+    style = cell_fill(color = "lightgreen")
+  )
+
+
+#####
+
+nested_modeltime_tbl_y %>%
   extract_nested_test_accuracy() %>%
   group_by(id) %>%
   table_modeltime_accuracy(.interactive = FALSE) %>%
@@ -486,17 +858,30 @@ nested_modeltime_tbl %>%
 # Average Ensemble: We’ll give a go at an average ensemble using a simple mean
 # with the ensemble_nested_average() function. We select type = "mean" for simple average.
 
-nested_ensemble_1_tbl <- nested_modeltime_tbl %>%
+
+nested_ensemble_1_tbl_h <- nested_modeltime_tbl_h %>%
+  ensemble_nested_average(
+    type           = "mean",
+    keep_submodels = TRUE
+  )
+
+nested_ensemble_1_tbl_h
+
+
+#####
+
+
+nested_ensemble_1_tbl_d <- nested_modeltime_tbl_d %>%
   ensemble_nested_average(
     type           = "mean",
     keep_submodels = TRUE
     )
 
-nested_ensemble_1_tbl
+nested_ensemble_1_tbl_d
 
 # We can check the accuracy again.
 
-nested_ensemble_1_tbl %>%
+nested_ensemble_1_tbl_d %>%
   extract_nested_test_accuracy() %>%
   group_by(id) %>%
   table_modeltime_accuracy(.interactive = FALSE) %>%
@@ -504,7 +889,6 @@ nested_ensemble_1_tbl %>%
     rmse == min(rmse),
     style = cell_fill(color = "lightgreen")
   )
-
 
 
 # Weighted Ensemble: Next, we can give a go at a weighted ensemble
@@ -538,31 +922,175 @@ nested_ensemble_2_tbl %>%
 # based on that metric.
 # The available metrics are in the default_forecast_accuracy_metric_set().
 
-best_nested_modeltime_tbl <- nested_ensemble_2_tbl %>%
+best_nested_modeltime_tbl_h <- nested_modeltime_tbl_h %>%
   modeltime_nested_select_best(
     metric                = "rmse",
     minimize              = TRUE,
     filter_test_forecasts = TRUE
   )
 
-# The best model selections can be accessed with extract_nested_best_model_report().
 
-best_nested_modeltime_tbl %>%
+best_nested_modeltime_tbl_h %>%
   extract_nested_best_model_report() %>%
   table_modeltime_accuracy(.interactive = TRUE)
+
+
+####
+
+best_nested_modeltime_tbl_d <- nested_modeltime_tbl_d %>%
+  modeltime_nested_select_best(
+    metric                = "rmse",
+    minimize              = TRUE,
+    filter_test_forecasts = TRUE
+  )
+
+
+best_nested_modeltime_tbl_d %>%
+  extract_nested_best_model_report() %>%
+  table_modeltime_accuracy(.interactive = TRUE)
+
+
+####
+
+best_nested_modeltime_tbl_w <- nested_modeltime_tbl_w %>%
+  modeltime_nested_select_best(
+    metric                = "rmse",
+    minimize              = TRUE,
+    filter_test_forecasts = TRUE
+  )
+
+
+best_nested_modeltime_tbl_w %>%
+  extract_nested_best_model_report() %>%
+  table_modeltime_accuracy(.interactive = TRUE)  
+
+
+####
+
+best_nested_modeltime_tbl_m <- nested_modeltime_tbl_m %>%
+  modeltime_nested_select_best(
+    metric                = "rmse",
+    minimize              = TRUE,
+    filter_test_forecasts = TRUE
+  )
+
+
+best_nested_modeltime_tbl_m %>%
+  extract_nested_best_model_report() %>%
+  table_modeltime_accuracy(.interactive = TRUE)  
+
+####
+
+best_nested_modeltime_tbl_q <- nested_modeltime_tbl_q %>%
+  modeltime_nested_select_best(
+    metric                = "rmse",
+    minimize              = TRUE,
+    filter_test_forecasts = TRUE
+  )
+
+
+best_nested_modeltime_tbl_q %>%
+  extract_nested_best_model_report() %>%
+  table_modeltime_accuracy(.interactive = TRUE) 
+
+
+####
+
+best_nested_modeltime_tbl_y <- nested_modeltime_tbl_y %>%
+  modeltime_nested_select_best(
+    metric                = "rmse",
+    minimize              = TRUE,
+    filter_test_forecasts = TRUE
+  )
+
+
+best_nested_modeltime_tbl_y %>%
+  extract_nested_best_model_report() %>%
+  table_modeltime_accuracy(.interactive = TRUE) 
+
 
 
 # Forecast plot: Once we’ve selected the best models,
 # we can easily visualize the best forecasts by time series.
 
-best_nested_modeltime_tbl %>%
+
+best_nested_modeltime_tbl_h %>%
   extract_nested_test_forecast() %>%
   group_by(id) %>%
-  filter(id == "D1142") %>%
+  filter(id == "H328") %>%
   plot_modeltime_forecast(
     .facet_ncol  = 1,
     .interactive = TRUE
   )
+
+#####
+
+best_nested_modeltime_tbl_d %>%
+  extract_nested_test_forecast() %>%
+  group_by(id) %>%
+  filter(id == "D2757") %>%
+  plot_modeltime_forecast(
+    .facet_ncol  = 1,
+    .interactive = TRUE
+  )
+
+
+#####
+
+best_nested_modeltime_tbl_w %>%
+  extract_nested_test_forecast() %>%
+  group_by(id) %>%
+  filter(id == "W229") %>%
+  plot_modeltime_forecast(
+    .facet_ncol  = 1,
+    .interactive = TRUE
+  )
+
+#####
+
+best_nested_modeltime_tbl_m %>%
+  extract_nested_test_forecast() %>%
+  group_by(id) %>%
+  filter(id == "M30623") %>%
+  plot_modeltime_forecast(
+    .facet_ncol  = 1,
+    .interactive = TRUE
+  )
+
+
+#####
+
+best_nested_modeltime_tbl_q %>%
+  extract_nested_test_forecast() %>%
+  group_by(id) %>%
+  filter(id == "Q9215") %>%
+  plot_modeltime_forecast(
+    .facet_ncol  = 1,
+    .interactive = TRUE
+  )
+
+
+#####
+
+best_nested_modeltime_tbl_y %>%
+  extract_nested_test_forecast() %>%
+  group_by(id) %>%
+  filter(id == "Y6181") %>%
+  plot_modeltime_forecast(
+    .facet_ncol  = 1,
+    .interactive = TRUE
+  )
+
+
+### total computation time
+
+End_h - Init_h
+End_d - Init_d
+End_w - Init_w
+End_m - Init_m
+End_q - Init_q
+End_y - Init_y
+
 
 
 
